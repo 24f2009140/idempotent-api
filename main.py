@@ -68,31 +68,33 @@ def check_rate_limit(client_id: str):
 
 
 
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    # Always let browser CORS preflight requests through.
-    if request.method == "OPTIONS":
-        return await call_next(request)
-
-    if request.url.path == "/healthz":
+    if request.method == "OPTIONS" or request.url.path == "/healthz":
         return await call_next(request)
 
     client_id = request.headers.get("X-Client-Id", "anonymous")
     retry_after = check_rate_limit(client_id)
 
     if retry_after is not None:
-        return JSONResponse(
+        response = JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded"},
-            headers={
-                "Retry-After": str(retry_after),
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
-            },
+            headers={"Retry-After": str(max(1, retry_after))},
         )
 
+        # Ensure browser clients can read the rate-limit response.
+        origin = request.headers.get("Origin")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Expose-Headers"] = "Retry-After"
+
+        return response
+
     return await call_next(request)
+
 
 
 @app.post("/orders", status_code=201)
